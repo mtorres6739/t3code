@@ -221,6 +221,7 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { NextStepRecommendations } from "./chat/NextStepRecommendations";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -282,6 +283,10 @@ import type { ThreadSyncPhase } from "../threadSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
+import {
+  deriveNextStepRecommendations,
+  latestCompletedAssistantText,
+} from "../nextStepRecommendations";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -2311,6 +2316,27 @@ function ChatViewContent(props: ChatViewProps) {
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
+  const nextStepRecommendations = useMemo(() => {
+    if (
+      !latestTurnSettled ||
+      isWorking ||
+      threadDetailLoading ||
+      activePendingApproval ||
+      activePendingUserInput ||
+      showPlanFollowUpPrompt
+    ) {
+      return [];
+    }
+    return deriveNextStepRecommendations(latestCompletedAssistantText(timelineMessages));
+  }, [
+    activePendingApproval,
+    activePendingUserInput,
+    isWorking,
+    latestTurnSettled,
+    showPlanFollowUpPrompt,
+    threadDetailLoading,
+    timelineMessages,
+  ]);
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -4877,6 +4903,17 @@ function ChatViewContent(props: ChatViewProps) {
     }
   };
 
+  const onSelectNextStepRecommendation = (prompt: string) => {
+    promptRef.current = prompt;
+    setComposerDraftPrompt(composerDraftTarget, prompt);
+    composerRef.current?.resetCursorState({
+      cursor: prompt.length,
+      prompt,
+      detectTrigger: true,
+    });
+    void onSend();
+  };
+
   const onInterrupt = async () => {
     if (!activeThread) return;
     const result = await interruptThreadTurn({
@@ -5817,6 +5854,13 @@ function ChatViewContent(props: ChatViewProps) {
                   ) : (
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   )}
+                  {nextStepRecommendations.length > 0 && !composerHasDraftContent ? (
+                    <NextStepRecommendations
+                      recommendations={nextStepRecommendations}
+                      disabled={isSendBusy || isConnecting}
+                      onSelect={onSelectNextStepRecommendation}
+                    />
+                  ) : null}
                   {threadSyncPhase && !activeEnvironmentUnavailable ? (
                     <ThreadSyncStatusPill phase={threadSyncPhase} />
                   ) : null}
