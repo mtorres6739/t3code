@@ -1,3 +1,4 @@
+import { APP_PRODUCT_BASE_NAME } from "@t3tools/shared/appFlavor";
 import { SettingsIcon } from "lucide-react";
 import { memo, useCallback } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -86,7 +87,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
           onBackdrop ? "text-white/70" : "text-muted-foreground",
         )}
       >
-        Code
+        {APP_PRODUCT_BASE_NAME === "T3 Code Pi" ? "Code Pi" : "Code"}
       </span>
     </Link>
   );

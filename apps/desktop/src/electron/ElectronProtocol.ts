@@ -6,14 +6,19 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import {
+  APP_PROTOCOL_SCHEME,
+  APP_PROTOCOL_SCHEME_DEV,
+  resolveAppProtocolScheme,
+} from "@t3tools/shared/appFlavor";
 import * as Electron from "electron";
 
 export const DESKTOP_HOST = "app";
-export const DESKTOP_PRODUCTION_SCHEME = "t3code";
-export const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
+export const DESKTOP_PRODUCTION_SCHEME = APP_PROTOCOL_SCHEME;
+export const DESKTOP_DEVELOPMENT_SCHEME = APP_PROTOCOL_SCHEME_DEV;
 
 export function getDesktopScheme(isDevelopment: boolean): string {
-  return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
+  return resolveAppProtocolScheme(isDevelopment);
 }
 
 export function getDesktopOrigin(isDevelopment: boolean): string {
@@ -117,7 +122,7 @@ async function proxyRequest(
   const targetUrl = new URL(`${requestUrl.pathname}${requestUrl.search}`, targetOrigin);
   const headers = new Headers(request.headers);
   const headersToRemove: string[] = [];
-  for (const name of headers.keys()) {
+  headers.forEach((_value, name) => {
     if (
       name === "host" ||
       name === "origin" ||
@@ -130,7 +135,7 @@ async function proxyRequest(
     ) {
       headersToRemove.push(name);
     }
-  }
+  });
   for (const name of headersToRemove) {
     headers.delete(name);
   }

@@ -4,6 +4,17 @@ import type {
   DesktopRuntimeArch,
   DesktopRuntimeInfo,
 } from "@t3tools/contracts";
+import {
+  APP_BUNDLE_ID,
+  APP_BUNDLE_ID_DEV,
+  APP_DEFAULT_HOME_DIR_NAME,
+  APP_PRODUCT_BASE_NAME,
+  resolveAppDisplayName,
+  resolveAppLegacyUserDataDirName,
+  resolveAppLinuxDesktopEntryName,
+  resolveAppLinuxWmClass,
+  resolveAppUserDataDirName,
+} from "@t3tools/shared/appFlavor";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -76,8 +87,6 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
-
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
@@ -95,9 +104,12 @@ function resolveDesktopAppBranding(input: {
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
   return {
-    baseName: APP_BASE_NAME,
+    baseName: APP_PRODUCT_BASE_NAME,
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    displayName: resolveAppDisplayName({
+      isDevelopment: input.isDevelopment,
+      isNightly: stageLabel === "Nightly",
+    }),
   };
 }
 
@@ -148,7 +160,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
   const configuredBaseDir = config.t3Home;
-  const baseDir = Option.getOrElse(configuredBaseDir, () => path.join(homeDirectory, ".t3"));
+  const baseDir = Option.getOrElse(configuredBaseDir, () =>
+    path.join(homeDirectory, APP_DEFAULT_HOME_DIR_NAME),
+  );
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const branding = resolveDesktopAppBranding({
@@ -160,8 +174,8 @@ const make = Effect.fn("desktop.environment.make")(function* (
     baseDir,
     isDevelopment && Option.isNone(configuredBaseDir) ? "dev" : "userdata",
   );
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const userDataDirName = resolveAppUserDataDirName(isDevelopment);
+  const legacyUserDataDirName = resolveAppLegacyUserDataDirName(isDevelopment);
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({
@@ -201,10 +215,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isDevelopment ? APP_BUNDLE_ID_DEV : APP_BUNDLE_ID,
     ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxDesktopEntryName: resolveAppLinuxDesktopEntryName(isDevelopment),
+    linuxWmClass: resolveAppLinuxWmClass(isDevelopment),
     userDataDirName,
     legacyUserDataDirName,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),

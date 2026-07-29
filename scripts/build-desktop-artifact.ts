@@ -2,6 +2,18 @@
 
 import * as NodeModule from "node:module";
 
+import {
+  APP_ARTIFACT_NAME_TEMPLATE,
+  APP_AUTO_UPDATE_REQUIRES_EXPLICIT_FEED,
+  APP_BUNDLE_ID,
+  APP_LINUX_EXECUTABLE_NAME,
+  APP_LINUX_WM_CLASS,
+  APP_PRODUCT_BASE_NAME,
+  APP_PRODUCT_NAME,
+  APP_PRODUCT_NAME_NIGHTLY,
+  APP_PROTOCOL_SCHEME,
+  APP_PROTOCOL_SCHEME_DEV,
+} from "@t3tools/shared/appFlavor";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
@@ -35,7 +47,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+const DESKTOP_APP_ID = APP_BUNDLE_ID;
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -1453,12 +1465,15 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
 ) {
   const env = yield* Config.all({
     updateRepository: Config.string("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
+    // Only used when this fork opts into ambient GitHub publish (not the default).
     githubRepository: Config.string("GITHUB_REPOSITORY").pipe(Config.option),
   });
+  // Fork default: require an explicit fork-owned feed. Ambient GITHUB_REPOSITORY
+  // alone must not publish auto-update metadata (avoids official/upstream feeds).
+  const explicitRepo = Option.getOrUndefined(env.updateRepository)?.trim() || "";
+  const ambientRepo = Option.getOrUndefined(env.githubRepository)?.trim() || "";
   const rawRepo = (
-    Option.getOrUndefined(env.updateRepository)?.trim() ||
-    Option.getOrUndefined(env.githubRepository)?.trim() ||
-    ""
+    APP_AUTO_UPDATE_REQUIRES_EXPLICIT_FEED ? explicitRepo : explicitRepo || ambientRepo
   ).trim();
   if (!rawRepo) return undefined;
 
@@ -1517,8 +1532,8 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+    ? APP_PRODUCT_NAME_NIGHTLY
+    : (desktopPackageJson.productName ?? APP_PRODUCT_NAME);
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -1538,7 +1553,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: APP_ARTIFACT_NAME_TEMPLATE,
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [...DESKTOP_FILE_EXCLUSIONS],
     directories: {
@@ -1570,8 +1585,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       category: "public.app-category.developer-tools",
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: APP_PRODUCT_BASE_NAME,
+          schemes: [APP_PROTOCOL_SCHEME, APP_PROTOCOL_SCHEME_DEV],
         },
       ],
       ...(macPasskeySigning
@@ -1586,12 +1601,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
-      executableName: "t3code",
+      executableName: APP_LINUX_EXECUTABLE_NAME,
       icon: "icons",
       category: "Development",
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          StartupWMClass: APP_LINUX_WM_CLASS,
         },
       },
     };
@@ -1903,14 +1918,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     stageDependencies,
   );
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    name: "t3code-pi",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "T3 Code desktop build",
-    author: "T3 Tools",
+    description: "T3 Code Pi desktop build",
+    author: "Mathew Torres",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,

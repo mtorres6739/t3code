@@ -1,4 +1,4 @@
-// This file mostly exists because we want dev mode to say "T3 Code (Dev)" instead of "electron"
+// This file mostly exists because we want dev mode to say "T3 Code Pi (Dev)" instead of "electron"
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -6,6 +6,13 @@ import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import {
+  APP_BUNDLE_ID as PRODUCTION_BUNDLE_ID,
+  APP_BUNDLE_ID_DEV,
+  APP_PROTOCOL_SCHEME,
+  APP_PROTOCOL_SCHEME_DEV,
+  resolveAppDisplayName,
+} from "../../../packages/shared/src/appFlavorRuntime.mjs";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -15,12 +22,13 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-export const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+export const APP_DISPLAY_NAME = resolveAppDisplayName({ isDevelopment });
 export const APP_BUNDLE_ID = isDevelopment
-  ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
-const LAUNCHER_VERSION = 14;
+  ? `${APP_BUNDLE_ID_DEV}.${devBundleIdSuffix || "local"}`
+  : PRODUCTION_BUNDLE_ID;
+const APP_PROTOCOL_SCHEMES = isDevelopment ? [APP_PROTOCOL_SCHEME_DEV] : [APP_PROTOCOL_SCHEME];
+// Bump when branded launcher identity (name/id/protocol) changes so cached bundles rebuild.
+const LAUNCHER_VERSION = 15;
 const defaultIconPath = NodePath.join(desktopDir, "resources", "icon.icns");
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,

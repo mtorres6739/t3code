@@ -1,0 +1,31 @@
+export const APP_PRODUCT_BASE_NAME: "T3 Code Pi";
+export const APP_PRODUCT_NAME: "T3 Code Pi";
+export const APP_PRODUCT_NAME_DEV: "T3 Code Pi (Dev)";
+export const APP_PRODUCT_NAME_NIGHTLY: "T3 Code Pi (Nightly)";
+export const APP_BUNDLE_ID: "com.mathewtorres.t3code.pi";
+export const APP_BUNDLE_ID_DEV: "com.mathewtorres.t3code.pi.dev";
+export const APP_PROTOCOL_SCHEME: "t3code-pi";
+export const APP_PROTOCOL_SCHEME_DEV: "t3code-pi-dev";
+export const APP_USER_DATA_DIR_NAME: "t3code-pi";
+export const APP_USER_DATA_DIR_NAME_DEV: "t3code-pi-dev";
+export const APP_LEGACY_USER_DATA_DIR_NAME: "T3 Code Pi";
+export const APP_LEGACY_USER_DATA_DIR_NAME_DEV: "T3 Code Pi (Dev)";
+export const APP_DEFAULT_HOME_DIR_NAME: ".t3-pi";
+export const APP_LINUX_EXECUTABLE_NAME: "t3code-pi";
+export const APP_LINUX_WM_CLASS: "t3code-pi";
+export const APP_LINUX_WM_CLASS_DEV: "t3code-pi-dev";
+export const APP_LINUX_DESKTOP_ENTRY_NAME: "t3code-pi.desktop";
+export const APP_LINUX_DESKTOP_ENTRY_NAME_DEV: "t3code-pi-dev.desktop";
+export const APP_ARTIFACT_NAME_TEMPLATE: "T3-Code-Pi-${version}-${arch}.${ext}";
+export const APP_AUTO_UPDATE_REQUIRES_EXPLICIT_FEED: true;
+
+export function resolveAppDisplayName(input: {
+  readonly isDevelopment: boolean;
+  readonly isNightly?: boolean;
+}): string;
+export function resolveAppProtocolScheme(isDevelopment: boolean): string;
+export function resolveAppBundleId(isDevelopment: boolean): string;
+export function resolveAppUserDataDirName(isDevelopment: boolean): string;
+export function resolveAppLegacyUserDataDirName(isDevelopment: boolean): string;
+export function resolveAppLinuxWmClass(isDevelopment: boolean): string;
+export function resolveAppLinuxDesktopEntryName(isDevelopment: boolean): string;

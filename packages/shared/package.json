@@ -199,6 +199,11 @@
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"
     },
+    "./appFlavor": {
+      "types": "./src/appFlavor.ts",
+      "import": "./src/appFlavor.ts",
+      "default": "./src/appFlavor.mjs"
+    },
     "./devHome": {
       "types": "./src/devHome.ts",
       "import": "./src/devHome.ts"
