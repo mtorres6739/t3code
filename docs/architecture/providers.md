@@ -13,7 +13,7 @@ Methods mirror the `NativeApi` interface defined in `@t3tools/contracts`:
 - `providers.respondToRequest`, `providers.stopSession`
 - `shell.openInEditor`, `server.getConfig`
 
-Codex is the only implemented provider. `claudeCode` is reserved in contracts/UI.
+Built-in providers are registered as `ProviderDriver` values (Codex, Claude, Cursor, Grok, OpenCode, Pi). Each driver owns snapshot probing, a runtime adapter, and optional text-generation support. Pi uses JSONL RPC (`pi --mode rpc`); see [docs/providers/pi.md](../providers/pi.md).
 
 ## Client transport
 
