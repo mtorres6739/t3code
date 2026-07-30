@@ -28,11 +28,18 @@ import {
   isRecord,
   tryParsePiJsonlRecord,
 } from "./PiJsonl.ts";
-import type { PiModel, PiRpcOutbound, PiRpcResponse, PiThinkingLevel } from "./PiRpcTypes.ts";
+import type {
+  PiCommand,
+  PiModel,
+  PiRpcOutbound,
+  PiRpcResponse,
+  PiThinkingLevel,
+} from "./PiRpcTypes.ts";
 import { isPiThinkingLevel, parsePiModelSlug, piModelSlug } from "./PiRpcTypes.ts";
 
 const DEFAULT_COMMAND_TIMEOUT = Duration.seconds(30);
 const DEFAULT_DISCOVERY_TIMEOUT = Duration.seconds(20);
+const COMMAND_DISCOVERY_TIMEOUT = Duration.seconds(5);
 
 export class PiRpcClientError extends Data.TaggedError("PiRpcClientError")<{
   readonly detail: string;
@@ -156,6 +163,77 @@ export function parsePiThinkingLevelsFromResponse(data: unknown): ReadonlyArray<
   return levels;
 }
 
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parsePiCommand(value: unknown): PiCommand | undefined {
+  if (!isRecord(value)) return undefined;
+  const name = nonEmptyString(value.name);
+  if (!name) return undefined;
+
+  const description = nonEmptyString(value.description);
+  const argumentHint =
+    nonEmptyString(value.argumentHint) ??
+    nonEmptyString(value.hint) ??
+    (isRecord(value.input) ? nonEmptyString(value.input.hint) : undefined);
+  const source = nonEmptyString(value.source);
+
+  return {
+    name,
+    ...(description ? { description } : {}),
+    ...(argumentHint ? { argumentHint } : {}),
+    ...(source ? { source } : {}),
+  };
+}
+
+/**
+ * Parse `get_commands` response data. Malformed payloads yield `[]`.
+ * Empty names are discarded. Duplicate names merge case-insensitively,
+ * keeping the first useful description/hint.
+ */
+export function parsePiCommandsFromResponse(data: unknown): ReadonlyArray<PiCommand> {
+  if (!isRecord(data) || !Array.isArray(data.commands)) {
+    return [];
+  }
+
+  const out: PiCommand[] = [];
+  const indexByName = new Map<string, number>();
+
+  for (const entry of data.commands) {
+    const command = parsePiCommand(entry);
+    if (!command) continue;
+
+    const key = command.name.toLowerCase();
+    const existingIndex = indexByName.get(key);
+    if (existingIndex === undefined) {
+      indexByName.set(key, out.length);
+      out.push(command);
+      continue;
+    }
+
+    const existing = out[existingIndex]!;
+    out[existingIndex] = {
+      ...existing,
+      ...(existing.description
+        ? {}
+        : command.description
+          ? { description: command.description }
+          : {}),
+      ...(existing.argumentHint
+        ? {}
+        : command.argumentHint
+          ? { argumentHint: command.argumentHint }
+          : {}),
+      ...(existing.source ? {} : command.source ? { source: command.source } : {}),
+    };
+  }
+
+  return out;
+}
+
 export function parsePiModelFromState(data: unknown): PiModel | undefined {
   if (!isRecord(data)) return undefined;
   return parsePiModel(data.model);
@@ -173,9 +251,11 @@ export const spawnPiRpcClient = Effect.fn("spawnPiRpcClient")(function* (
   const args = ["--mode", "rpc", ...(options.extraArgs ?? [])];
   const commandTimeout = options.commandTimeout ?? DEFAULT_COMMAND_TIMEOUT;
 
-  const spawnCommand = yield* resolveSpawnCommand(binaryPath, args, {
-    ...(options.env ? { env: options.env, extendEnv: true } : {}),
-  }).pipe(
+  const spawnCommand = yield* resolveSpawnCommand(
+    binaryPath,
+    args,
+    options.env ? { env: options.env, extendEnv: true } : {},
+  ).pipe(
     Effect.mapError((cause) =>
       piRpcClientError(`Failed to resolve Pi binary '${binaryPath}'.`, cause),
     ),
@@ -397,11 +477,13 @@ export interface PiDiscoveryResult {
   readonly thinkingLevelsBySlug: ReadonlyMap<string, ReadonlyArray<PiThinkingLevel>>;
   readonly currentModel: PiModel | undefined;
   readonly currentThinkingLevels: ReadonlyArray<PiThinkingLevel>;
+  /** Extension/prompt/skill commands from `get_commands` (fail-soft; may be empty). */
+  readonly commands: ReadonlyArray<PiCommand>;
 }
 
 /**
- * Short-lived RPC session used for provider probes: models + thinking levels.
- * Always disposes the child, including on failure.
+ * Short-lived RPC session used for provider probes: models, thinking levels,
+ * and fail-soft command discovery. Always disposes the child, including on failure.
  */
 export const discoverPiModels = Effect.fn("discoverPiModels")(function* (
   options: PiRpcSpawnOptions,
@@ -440,6 +522,20 @@ export const discoverPiModels = Effect.fn("discoverPiModels")(function* (
     );
     const currentThinkingLevels = parsePiThinkingLevelsFromResponse(thinkingResponse.data);
 
+    // Command discovery is fail-soft: unsupported/failed get_commands must not
+    // break model discovery for the provider health snapshot.
+    const commandsResponse = yield* client
+      .send({ type: "get_commands" }, { timeout: COMMAND_DISCOVERY_TIMEOUT })
+      .pipe(
+        Effect.orElseSucceed(() => ({
+          type: "response" as const,
+          command: "get_commands",
+          success: true,
+          data: { commands: [] },
+        })),
+      );
+    const commands = parsePiCommandsFromResponse(commandsResponse.data);
+
     const thinkingLevelsBySlug = new Map<string, ReadonlyArray<PiThinkingLevel>>();
     if (currentModel) {
       thinkingLevelsBySlug.set(piModelSlug(currentModel), currentThinkingLevels);
@@ -464,6 +560,7 @@ export const discoverPiModels = Effect.fn("discoverPiModels")(function* (
       thinkingLevelsBySlug,
       currentModel,
       currentThinkingLevels,
+      commands,
     } satisfies PiDiscoveryResult;
   }).pipe(Effect.ensuring(client.dispose()));
 });

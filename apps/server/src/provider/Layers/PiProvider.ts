@@ -11,6 +11,7 @@ import {
   type PiSettings,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -34,7 +35,7 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
 import { discoverPiModels, type PiDiscoveryResult } from "../pi/PiRpcClient.ts";
-import type { PiModel, PiThinkingLevel } from "../pi/PiRpcTypes.ts";
+import type { PiCommand, PiModel, PiThinkingLevel } from "../pi/PiRpcTypes.ts";
 import { piModelSlug } from "../pi/PiRpcTypes.ts";
 
 const PI_PRESENTATION = {
@@ -101,6 +102,44 @@ export function buildPiDiscoveredModels(
       slug === currentSlug,
     );
   });
+}
+
+/**
+ * Map Pi RPC commands into provider slash-command autocomplete entries.
+ * Dedupes case-insensitively and preserves the first useful description/hint.
+ */
+export function mapPiCommandsToSlashCommands(
+  commands: ReadonlyArray<PiCommand>,
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const commandsByName = new Map<string, ServerProviderSlashCommand>();
+
+  for (const command of commands) {
+    const name = command.name.trim();
+    if (!name) continue;
+
+    const description = command.description?.trim() || undefined;
+    const argumentHint = command.argumentHint?.trim() || undefined;
+    const mapped: ServerProviderSlashCommand = {
+      name,
+      ...(description ? { description } : {}),
+      ...(argumentHint ? { input: { hint: argumentHint } } : {}),
+    };
+
+    const key = name.toLowerCase();
+    const existing = commandsByName.get(key);
+    if (!existing) {
+      commandsByName.set(key, mapped);
+      continue;
+    }
+
+    commandsByName.set(key, {
+      ...existing,
+      ...(existing.description ? {} : description ? { description } : {}),
+      ...(existing.input?.hint ? {} : argumentHint ? { input: { hint: argumentHint } } : {}),
+    });
+  }
+
+  return [...commandsByName.values()];
 }
 
 export function buildInitialPiProviderSnapshot(
@@ -292,6 +331,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
 
   const discovery = discoveryResult.success.value;
   const discoveredModels = buildPiDiscoveredModels(discovery);
+  const slashCommands = mapPiCommandsToSlashCommands(discovery.commands);
   const models = providerModelsFromSettings(
     discoveredModels,
     piSettings.customModels ?? [],
@@ -304,6 +344,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       enabled: piSettings.enabled,
       checkedAt,
       models,
+      slashCommands,
       probe: {
         installed: true,
         version,
@@ -320,6 +361,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     enabled: piSettings.enabled,
     checkedAt,
     models,
+    slashCommands,
     probe: {
       installed: true,
       version,

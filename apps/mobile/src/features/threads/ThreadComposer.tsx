@@ -404,7 +404,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           type: "provider-slash-command" as const,
           command: cmd,
           label: `/${cmd.name}`,
-          description: cmd.description ?? "",
+          description: cmd.description ?? cmd.input?.hint ?? "",
         });
       }
 

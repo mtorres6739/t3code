@@ -10,6 +10,7 @@ import {
   buildInitialPiProviderSnapshot,
   buildPiDiscoveredModels,
   checkPiProviderStatus,
+  mapPiCommandsToSlashCommands,
   piModelToServerProviderModel,
 } from "./PiProvider.ts";
 import type { PiDiscoveryResult } from "../pi/PiRpcClient.ts";
@@ -53,6 +54,7 @@ describe("Pi model discovery mapping", () => {
       ]),
       currentModel: { id: "claude-sonnet", provider: "anthropic" },
       currentThinkingLevels: ["off", "low", "medium", "high"],
+      commands: [],
     };
     const models = buildPiDiscoveredModels(discovery);
     expect(models.map((model) => model.slug)).toEqual(["anthropic/claude-sonnet", "openai/gpt"]);
@@ -71,6 +73,56 @@ describe("Pi model discovery mapping", () => {
   it("exposes empty thinking options when RPC returned none", () => {
     const model = piModelToServerProviderModel({ id: "x", provider: "p", name: "X" }, []);
     expect(model.capabilities?.optionDescriptors).toEqual([]);
+  });
+});
+
+describe("mapPiCommandsToSlashCommands", () => {
+  it("maps names, descriptions, and argument hints for composer autocomplete", () => {
+    expect(
+      mapPiCommandsToSlashCommands([
+        {
+          name: "review",
+          description: "Review changes",
+          argumentHint: "[path]",
+          source: "prompt",
+        },
+        { name: "skill:test", description: "Run skill", source: "skill" },
+        { name: "llama", source: "extension" },
+      ]),
+    ).toEqual([
+      {
+        name: "review",
+        description: "Review changes",
+        input: { hint: "[path]" },
+      },
+      {
+        name: "skill:test",
+        description: "Run skill",
+      },
+      {
+        name: "llama",
+      },
+    ]);
+  });
+
+  it("dedupes command names case-insensitively while filling missing fields", () => {
+    expect(
+      mapPiCommandsToSlashCommands([
+        { name: "Review" },
+        { name: "review", description: "Review changes", argumentHint: "[path]" },
+        { name: "REVIEW", description: "ignored later", argumentHint: "ignored" },
+      ]),
+    ).toEqual([
+      {
+        name: "Review",
+        description: "Review changes",
+        input: { hint: "[path]" },
+      },
+    ]);
+  });
+
+  it("drops empty command names", () => {
+    expect(mapPiCommandsToSlashCommands([{ name: "   " }, { name: "" }])).toEqual([]);
   });
 });
 
@@ -131,6 +183,169 @@ it.layer(NodeServices.layer)("checkPiProviderStatus", (it) => {
       expect(snapshot.models).toEqual([]);
       expect(snapshot.status).toBe("error");
       expect(snapshot.message).toMatch(/model discovery failed/i);
+    }),
+  );
+
+  it.effect("includes discovered slash commands on a ready snapshot", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-pi-cmds-" });
+          const piPath = path.join(dir, "pi");
+          yield* fs.writeFileString(
+            piPath,
+            `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes("--version")) {
+  process.stdout.write("pi 1.2.3\\n");
+  process.exit(0);
+}
+process.stdin.setEncoding("utf8");
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let idx;
+  while ((idx = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, idx).replace(/\\r$/, "");
+    buffer = buffer.slice(idx + 1);
+    if (!line.trim()) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    const id = msg.id;
+    const respond = (command, success, data, error) => {
+      process.stdout.write(JSON.stringify({
+        type: "response", id, command, success,
+        ...(data !== undefined ? { data } : {}),
+        ...(error ? { error } : {}),
+      }) + "\\n");
+    };
+    switch (msg.type) {
+      case "get_available_models":
+        respond("get_available_models", true, {
+          models: [{ id: "sonnet", provider: "anthropic", name: "Sonnet", reasoning: true }],
+        });
+        break;
+      case "get_state":
+        respond("get_state", true, {
+          model: { id: "sonnet", provider: "anthropic" },
+          thinkingLevel: "medium",
+        });
+        break;
+      case "get_available_thinking_levels":
+        respond("get_available_thinking_levels", true, { levels: ["off", "medium", "high"] });
+        break;
+      case "get_commands":
+        respond("get_commands", true, {
+          commands: [
+            { name: "review", description: "Review changes", source: "prompt", argumentHint: "[path]" },
+            { name: "skill:test", description: "Test skill", source: "skill" },
+            { name: "llama", description: "Manage models", source: "extension" },
+          ],
+        });
+        break;
+      default:
+        respond(msg.type || "unknown", false, undefined, "unknown command");
+    }
+  }
+});
+`,
+          );
+          yield* fs.chmod(piPath, 0o755);
+          return yield* checkPiProviderStatus(
+            decodePiSettings({ enabled: true, binaryPath: piPath }),
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["anthropic/sonnet"]);
+      expect(snapshot.slashCommands).toEqual([
+        {
+          name: "review",
+          description: "Review changes",
+          input: { hint: "[path]" },
+        },
+        {
+          name: "skill:test",
+          description: "Test skill",
+        },
+        {
+          name: "llama",
+          description: "Manage models",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("stays ready when get_commands fails but models succeed", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-pi-cmdfail-" });
+          const piPath = path.join(dir, "pi");
+          yield* fs.writeFileString(
+            piPath,
+            `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes("--version")) {
+  process.stdout.write("pi 1.2.3\\n");
+  process.exit(0);
+}
+process.stdin.setEncoding("utf8");
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let idx;
+  while ((idx = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, idx).replace(/\\r$/, "");
+    buffer = buffer.slice(idx + 1);
+    if (!line.trim()) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    const id = msg.id;
+    const respond = (command, success, data, error) => {
+      process.stdout.write(JSON.stringify({
+        type: "response", id, command, success,
+        ...(data !== undefined ? { data } : {}),
+        ...(error ? { error } : {}),
+      }) + "\\n");
+    };
+    switch (msg.type) {
+      case "get_available_models":
+        respond("get_available_models", true, {
+          models: [{ id: "m", provider: "p", name: "M", reasoning: false }],
+        });
+        break;
+      case "get_state":
+        respond("get_state", true, { model: { id: "m", provider: "p" } });
+        break;
+      case "get_available_thinking_levels":
+        respond("get_available_thinking_levels", true, { levels: ["off"] });
+        break;
+      case "get_commands":
+        respond("get_commands", false, undefined, "unknown command");
+        break;
+      default:
+        respond(msg.type || "unknown", false, undefined, "unknown command");
+    }
+  }
+});
+`,
+          );
+          yield* fs.chmod(piPath, 0o755);
+          return yield* checkPiProviderStatus(
+            decodePiSettings({ enabled: true, binaryPath: piPath }),
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["p/m"]);
+      expect(snapshot.slashCommands).toEqual([]);
     }),
   );
 });

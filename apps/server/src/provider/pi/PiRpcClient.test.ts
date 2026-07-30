@@ -2,16 +2,18 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeTimers from "node:timers/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 
 import {
+  discoverPiModels,
+  parsePiCommandsFromResponse,
   parsePiModelsFromResponse,
   parsePiThinkingLevelsFromResponse,
   spawnPiRpcClient,
@@ -74,6 +76,15 @@ process.stdin.on("data", (chunk) => {
       case "set_thinking_level":
         respond("set_thinking_level", true);
         break;
+      case "get_commands":
+        respond("get_commands", true, {
+          commands: [
+            { name: "review", description: "Review changes", source: "prompt" },
+            { name: "skill:test", description: "Test skill", source: "skill" },
+            { name: "llama", description: "Manage models", source: "extension", argumentHint: "[model]" },
+          ],
+        });
+        break;
       case "prompt":
         respond("prompt", true);
         process.stdout.write(JSON.stringify({ type: "agent_start" }) + "\\n");
@@ -98,6 +109,76 @@ process.stdin.on("data", (chunk) => {
   }
 });
 `;
+
+describe("parsePiCommandsFromResponse", () => {
+  it("parses valid extension, prompt, and skill commands", () => {
+    const commands = parsePiCommandsFromResponse({
+      commands: [
+        { name: "llama", description: "Manage models", source: "extension" },
+        { name: "review", description: "Review changes", source: "prompt", argumentHint: "[path]" },
+        { name: "skill:ios-debugger-agent", description: "iOS debug", source: "skill" },
+      ],
+    });
+    assert.equal(commands.length, 3);
+    assert.deepEqual(commands[0], {
+      name: "llama",
+      description: "Manage models",
+      source: "extension",
+    });
+    assert.deepEqual(commands[1], {
+      name: "review",
+      description: "Review changes",
+      argumentHint: "[path]",
+      source: "prompt",
+    });
+    assert.equal(commands[2]?.name, "skill:ios-debugger-agent");
+  });
+
+  it("returns empty for malformed payloads and drops empty names", () => {
+    assert.deepEqual(parsePiCommandsFromResponse(undefined), []);
+    assert.deepEqual(parsePiCommandsFromResponse(null), []);
+    assert.deepEqual(parsePiCommandsFromResponse({}), []);
+    assert.deepEqual(parsePiCommandsFromResponse({ commands: "nope" }), []);
+    assert.deepEqual(
+      parsePiCommandsFromResponse({
+        commands: [{ name: "" }, { name: "   " }, null, 42, { description: "no name" }],
+      }),
+      [],
+    );
+  });
+
+  it("dedupes command names case-insensitively and fills missing description/hint", () => {
+    const commands = parsePiCommandsFromResponse({
+      commands: [
+        { name: "Review", source: "prompt" },
+        { name: "review", description: "Review changes", argumentHint: "[path]", source: "prompt" },
+        { name: "REVIEW", description: "ignored", argumentHint: "ignored" },
+      ],
+    });
+    assert.equal(commands.length, 1);
+    assert.deepEqual(commands[0], {
+      name: "Review",
+      description: "Review changes",
+      argumentHint: "[path]",
+      source: "prompt",
+    });
+  });
+
+  it("accepts hint aliases on command objects", () => {
+    assert.deepEqual(
+      parsePiCommandsFromResponse({
+        commands: [{ name: "a", hint: "from-hint" }],
+      })[0],
+      { name: "a", argumentHint: "from-hint" },
+    );
+    assert.deepEqual(
+      parsePiCommandsFromResponse({
+        commands: [{ name: "b", input: { hint: "from-input" } }],
+      })[0],
+      { name: "b", argumentHint: "from-input" },
+    );
+  });
+});
 
 it.layer(NodeServices.layer)("PiRpcClient", (it) => {
   it.effect("correlates requests, streams events, and handles command errors", () =>
@@ -175,7 +256,7 @@ process.stdin.resume();
       });
 
       // Effect tests use a TestClock, so wait on the real process clock here.
-      yield* Effect.promise(() => NodeTimers.setTimeout(150));
+      yield* Effect.promise(() => NodeTimersPromises.setTimeout(150));
       const result = yield* client.send({ type: "get_available_models" }).pipe(Effect.result);
       assert.equal(result._tag, "Failure");
       yield* client.dispose();
@@ -212,6 +293,76 @@ process.stdin.on("data", (chunk) => {
       const response = yield* client.send({ type: "get_available_models" });
       assert.equal(parsePiModelsFromResponse(response.data).length, 1);
       yield* client.dispose();
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("discoverPiModels returns commands from get_commands", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* Effect.promise(() => writeFakePiRpc(basicRpcScript));
+      const discovery = yield* discoverPiModels({
+        binaryPath,
+        commandTimeout: "3 seconds",
+      });
+      assert.equal(discovery.models.length, 2);
+      assert.equal(discovery.commands.length, 3);
+      assert.equal(discovery.commands[0]?.name, "review");
+      assert.equal(discovery.commands[1]?.name, "skill:test");
+      assert.equal(discovery.commands[2]?.argumentHint, "[model]");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("discoverPiModels keeps models when get_commands fails", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* Effect.promise(() =>
+        writeFakePiRpc(`#!/usr/bin/env node
+process.stdin.setEncoding("utf8");
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let idx;
+  while ((idx = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, idx).replace(/\\r$/, "");
+    buffer = buffer.slice(idx + 1);
+    if (!line.trim()) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    const id = msg.id;
+    const respond = (command, success, data, error) => {
+      process.stdout.write(JSON.stringify({
+        type: "response", id, command, success,
+        ...(data !== undefined ? { data } : {}),
+        ...(error ? { error } : {}),
+      }) + "\\n");
+    };
+    switch (msg.type) {
+      case "get_available_models":
+        respond("get_available_models", true, {
+          models: [{ id: "m", provider: "p", name: "M", reasoning: false }],
+        });
+        break;
+      case "get_state":
+        respond("get_state", true, { model: { id: "m", provider: "p" } });
+        break;
+      case "get_available_thinking_levels":
+        respond("get_available_thinking_levels", true, { levels: ["off"] });
+        break;
+      case "get_commands":
+        respond("get_commands", false, undefined, "unknown command");
+        break;
+      default:
+        respond(msg.type || "unknown", false, undefined, "unknown command");
+    }
+  }
+});
+`),
+      );
+      const discovery = yield* discoverPiModels({
+        binaryPath,
+        commandTimeout: "3 seconds",
+      });
+      assert.equal(discovery.models.length, 1);
+      assert.equal(discovery.models[0]?.id, "m");
+      assert.deepEqual(discovery.commands, []);
     }).pipe(Effect.scoped),
   );
 });

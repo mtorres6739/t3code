@@ -1,5 +1,5 @@
 import {
-  insertRankedSearchResult,
+  compareRankedSearchResults,
   normalizeSearchQuery,
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
@@ -65,19 +65,16 @@ export function searchSlashCommandItems(
       continue;
     }
 
-    insertRankedSearchResult(
-      ranked,
-      {
-        item,
-        score,
-        tieBreaker:
-          item.type === "slash-command"
-            ? `0\u0000${item.command}`
-            : `1\u0000${item.command.name}\u0000${item.provider}`,
-      },
-      Number.POSITIVE_INFINITY,
-    );
+    ranked.push({
+      item,
+      score,
+      tieBreaker:
+        item.type === "slash-command"
+          ? `0\u0000${item.command}`
+          : `1\u0000${item.command.name}\u0000${item.provider}`,
+    });
   }
 
+  ranked.sort(compareRankedSearchResults);
   return ranked.map((entry) => entry.item);
 }

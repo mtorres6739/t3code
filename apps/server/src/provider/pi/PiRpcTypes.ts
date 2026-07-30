@@ -29,6 +29,14 @@ export interface PiModel {
   readonly thinkingLevelMap?: Readonly<Record<string, string>> | undefined;
 }
 
+/** Command reported by Pi RPC `get_commands` (extension, prompt, or skill). */
+export interface PiCommand {
+  readonly name: string;
+  readonly description?: string | undefined;
+  readonly argumentHint?: string | undefined;
+  readonly source?: string | undefined;
+}
+
 export interface PiRpcResponse {
   readonly type: "response";
   readonly id?: string | undefined;
