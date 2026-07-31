@@ -20,6 +20,8 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  threadOrder?: string[];
+  completionAttentionSince?: string;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -35,6 +37,8 @@ export interface UiProjectState {
 }
 
 export interface UiThreadState {
+  threadOrder: string[];
+  completionAttentionSince: string;
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
@@ -48,6 +52,8 @@ export interface UiState extends UiProjectState, UiThreadState, UiEndpointState 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  threadOrder: [],
+  completionAttentionSince: new Date().toISOString(),
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -98,7 +104,10 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   );
 }
 
-export function parsePersistedState(parsed: PersistedUiState): UiState {
+export function parsePersistedState(
+  parsed: PersistedUiState,
+  migrationTimestamp = new Date().toISOString(),
+): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
       ? (() => {
@@ -122,9 +131,19 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
       ? sanitizeStringArray(parsed.projectOrderCwds).map(legacyProjectCwdPreferenceKey)
       : sanitizeStringArray(parsed.projectOrder);
 
+  const parsedAttentionSince =
+    typeof parsed.completionAttentionSince === "string" &&
+    Number.isFinite(Date.parse(parsed.completionAttentionSince))
+      ? parsed.completionAttentionSince
+      : migrationTimestamp;
+
   return {
     projectExpandedById,
     projectOrder,
+    threadOrder: sanitizeStringArray(parsed.threadOrder),
+    completionAttentionSince: Number.isFinite(Date.parse(parsedAttentionSince))
+      ? parsedAttentionSince
+      : new Date().toISOString(),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -203,6 +222,8 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        threadOrder: state.threadOrder,
+        completionAttentionSince: state.completionAttentionSince,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
@@ -337,48 +358,71 @@ export function setProjectExpanded(
   };
 }
 
+function reorderPreferredItems(
+  currentOrder: readonly string[],
+  draggedIds: readonly string[],
+  targetIds: readonly string[],
+): string[] | null {
+  if (draggedIds.length === 0) return null;
+  const draggedSet = new Set(draggedIds);
+  const targetSet = new Set(targetIds);
+  if (draggedIds.every((id) => targetSet.has(id))) return null;
+
+  const originalTargetIndex = currentOrder.findIndex((id) => targetSet.has(id));
+  if (originalTargetIndex < 0) return null;
+
+  const order = [...currentOrder];
+  const removed: string[] = [];
+  let draggedBeforeTarget = 0;
+  for (let i = order.length - 1; i >= 0; i--) {
+    if (draggedSet.has(order[i]!)) {
+      removed.unshift(order.splice(i, 1)[0]!);
+      if (i < originalTargetIndex) draggedBeforeTarget++;
+    }
+  }
+  if (removed.length === 0) return null;
+
+  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
+  order.splice(insertIndex, 0, ...removed);
+  return order;
+}
+
 export function reorderProjects(
   state: UiState,
   currentProjectOrder: readonly string[],
   draggedProjectIds: readonly string[],
   targetProjectIds: readonly string[],
 ): UiState {
-  if (draggedProjectIds.length === 0) {
-    return state;
-  }
-  const draggedSet = new Set(draggedProjectIds);
-  const targetSet = new Set(targetProjectIds);
-  if (draggedProjectIds.every((id) => targetSet.has(id))) {
-    return state;
-  }
+  const projectOrder = reorderPreferredItems(
+    currentProjectOrder,
+    draggedProjectIds,
+    targetProjectIds,
+  );
+  return projectOrder === null ? state : { ...state, projectOrder };
+}
 
-  const originalTargetIndex = currentProjectOrder.findIndex((id) => targetSet.has(id));
-  if (originalTargetIndex < 0) {
-    return state;
-  }
+export function reorderThreads(
+  state: UiState,
+  currentThreadOrder: readonly string[],
+  draggedThreadId: string,
+  targetThreadId: string,
+): UiState {
+  const reorderedProjectThreads = reorderPreferredItems(
+    currentThreadOrder,
+    [draggedThreadId],
+    [targetThreadId],
+  );
+  if (reorderedProjectThreads === null) return state;
 
-  const projectOrder = [...currentProjectOrder];
-
-  const removed: string[] = [];
-  let draggedBeforeTarget = 0;
-  for (let i = projectOrder.length - 1; i >= 0; i--) {
-    if (draggedSet.has(projectOrder[i]!)) {
-      removed.unshift(projectOrder.splice(i, 1)[0]!);
-      if (i < originalTargetIndex) {
-        draggedBeforeTarget++;
-      }
-    }
-  }
-  if (removed.length === 0) {
-    return state;
-  }
-
-  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
-  projectOrder.splice(insertIndex, 0, ...removed);
-  return {
-    ...state,
-    projectOrder,
-  };
+  // The drag context supplies one project's order, while threadOrder stores
+  // every project's preference. Replace only this project's slice so a drag
+  // in one project cannot erase the order saved for another.
+  const currentProjectThreadIds = new Set(currentThreadOrder);
+  const threadOrder = [
+    ...state.threadOrder.filter((threadId) => !currentProjectThreadIds.has(threadId)),
+    ...reorderedProjectThreads,
+  ];
+  return { ...state, threadOrder };
 }
 
 interface UiStateStore extends UiState {
@@ -391,6 +435,11 @@ interface UiStateStore extends UiState {
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
+  ) => void;
+  reorderThreads: (
+    currentThreadOrder: readonly string[],
+    draggedThreadId: string,
+    targetThreadId: string,
   ) => void;
 }
 
@@ -410,11 +459,17 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
     ),
+  reorderThreads: (currentThreadOrder, draggedThreadId, targetThreadId) =>
+    set((state) => reorderThreads(state, currentThreadOrder, draggedThreadId, targetThreadId)),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  // Persist the rollout epoch immediately. Thread completion events live in the
+  // server projection and may not otherwise mutate this local store before the
+  // app closes, which would make a restart silently move the epoch forward.
+  persistState(useUiStateStore.getState());
   window.addEventListener("beforeunload", () => {
     debouncedPersistState.flush();
   });

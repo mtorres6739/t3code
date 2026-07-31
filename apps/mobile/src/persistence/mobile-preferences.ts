@@ -23,6 +23,8 @@ export interface Preferences {
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   readonly projectGroupingEnabled?: boolean;
+  /** First mobile build timestamp whose later completions require review. */
+  readonly completionAttentionSince?: string;
   /**
    * Device-local mirror of the web beta's `sidebarV2Enabled`. Mobile has no
    * client-settings sync, so the flat v2 thread list is opted out of per
@@ -80,6 +82,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     projectGroupingEnabled?: boolean;
+    completionAttentionSince?: string;
     threadListV2Enabled?: boolean;
   } = {};
 
@@ -109,6 +112,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
     preferences.projectGroupingEnabled = parsed.projectGroupingEnabled;
+  }
+  if (
+    typeof parsed.completionAttentionSince === "string" &&
+    Number.isFinite(Date.parse(parsed.completionAttentionSince))
+  ) {
+    preferences.completionAttentionSince = parsed.completionAttentionSince;
   }
   if (typeof parsed.threadListV2Enabled === "boolean") {
     preferences.threadListV2Enabled = parsed.threadListV2Enabled;
@@ -280,7 +289,16 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       }
     }
 
-    return parsed === null ? {} : sanitizePreferences(parsed);
+    const preferences = parsed === null ? {} : sanitizePreferences(parsed);
+    if (preferences.completionAttentionSince !== undefined) {
+      return preferences;
+    }
+
+    const completionAttentionSince = new Date().toISOString();
+    const migrated = { ...preferences, completionAttentionSince };
+    const payload = yield* encode(PREFERENCES_KEY, migrated);
+    yield* saveJson(payload);
+    return migrated;
   });
 
   const load = lock

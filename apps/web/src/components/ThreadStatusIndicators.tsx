@@ -234,6 +234,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
+  const completionAttentionSince = useUiStateStore((state) => state.completionAttentionSince);
   const threadProject = useProject(
     useMemo(
       () => scopeProjectRef(thread.environmentId, thread.projectId),
@@ -260,6 +261,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
       ...thread,
       lastVisitedAt,
     },
+    completionAttentionSince,
   });
 
   if (!prStatus && !threadStatus) {

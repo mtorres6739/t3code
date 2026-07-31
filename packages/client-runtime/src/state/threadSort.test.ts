@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sortThreads, type ThreadSortInput } from "./threadSort.ts";
+import {
+  normalizeSidebarThreadSortOrder,
+  sortThreads,
+  type ThreadSortInput,
+} from "./threadSort.ts";
 
 type TestThread = { readonly id: string } & ThreadSortInput;
 
@@ -16,6 +20,10 @@ function makeThread(overrides: Partial<TestThread> = {}): TestThread {
 }
 
 describe("sortThreads", () => {
+  it("normalizes unsupported manual ordering to activity order for non-sidebar consumers", () => {
+    expect(normalizeSidebarThreadSortOrder("manual")).toBe("updated_at");
+    expect(normalizeSidebarThreadSortOrder("created_at")).toBe("created_at");
+  });
   it("falls back to updatedAt and createdAt when latestUserMessageAt is invalid and there are no messages", () => {
     const sorted = sortThreads(
       [

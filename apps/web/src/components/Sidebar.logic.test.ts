@@ -13,10 +13,12 @@ import {
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  promoteAttentionItems,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarV2Status,
+  resolveThreadAttention,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   formatWorkingDurationLabel,
@@ -204,10 +206,11 @@ describe("resolveSidebarStageBadgeLabel", () => {
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
   startedAt?: string | null;
+  state?: OrchestrationLatestTurn["state"];
 }): OrchestrationLatestTurn {
   return {
     turnId: "turn-1" as never,
-    state: "completed",
+    state: overrides?.state ?? "completed",
     assistantMessageId: null,
     requestedAt: "2026-03-09T10:00:00.000Z",
     startedAt:
@@ -899,7 +902,7 @@ describe("resolveThreadStatusPill", () => {
     ).toBeNull();
   });
 
-  it("shows completed when there is an unseen completion and no active blocker", () => {
+  it("shows ready-for-review for post-rollout completion", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -913,8 +916,91 @@ describe("resolveThreadStatusPill", () => {
             activeTurnId: null,
           },
         },
+        completionAttentionSince: "2026-03-09T09:00:00.000Z",
       }),
-    ).toMatchObject({ label: "Completed", pulse: false });
+    ).toMatchObject({ label: "Ready for review", pulse: false });
+  });
+});
+
+describe("attention ordering", () => {
+  const completedThread = (overrides: Record<string, unknown> = {}) => ({
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestTurn: makeLatestTurn({ completedAt: "2026-03-09T10:05:00.000Z" }),
+    latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+    settledAt: null,
+    updatedAt: "2026-03-09T10:05:00.000Z",
+    session: {
+      threadId: ThreadId.make("thread-1"),
+      status: "ready" as const,
+      providerName: "Codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: "2026-03-09T10:05:00.000Z",
+    },
+    ...overrides,
+  });
+
+  it("keeps a post-rollout completion actionable until newer user activity or settlement", () => {
+    const epoch = "2026-03-09T09:00:00.000Z";
+    expect(resolveThreadAttention(completedThread(), epoch)?.status.label).toBe("Ready for review");
+    expect(
+      resolveThreadAttention(completedThread({ lastVisitedAt: "2026-03-09T10:06:00.000Z" }), epoch)
+        ?.status.label,
+    ).toBe("Ready for review");
+    expect(
+      resolveThreadAttention(
+        completedThread({ latestUserMessageAt: "2026-03-09T10:05:00.000Z" }),
+        epoch,
+      ),
+    ).toBeNull();
+    expect(
+      resolveThreadAttention(completedThread({ settledAt: "2026-03-09T10:07:00.000Z" }), epoch),
+    ).toBeNull();
+    expect(resolveThreadAttention(completedThread(), "2026-03-09T11:00:00.000Z")).toBeNull();
+  });
+
+  it("classifies failed turns and ignores interrupted turns", () => {
+    const epoch = "2026-03-09T09:00:00.000Z";
+    expect(
+      resolveThreadAttention(
+        completedThread({ latestTurn: makeLatestTurn({ state: "error" }) }),
+        epoch,
+      )?.status.label,
+    ).toBe("Failed");
+    expect(
+      resolveThreadAttention(
+        completedThread({ latestTurn: makeLatestTurn({ state: "interrupted" }) }),
+        epoch,
+      ),
+    ).toBeNull();
+  });
+
+  it("promotes newest attention while preserving the remaining baseline", () => {
+    const baseline = ["manual-a", "attention-old", "manual-b", "attention-new"];
+    const timestamps: Record<string, number> = {
+      "attention-old": 10,
+      "attention-new": 20,
+    };
+    expect(
+      promoteAttentionItems(baseline, (item) =>
+        timestamps[item] === undefined
+          ? null
+          : {
+              status: {
+                label: "Ready for review",
+                colorClass: "text-emerald-600",
+                dotClass: "bg-emerald-500",
+                pulse: false,
+              },
+              timestamp: timestamps[item],
+            },
+      ),
+    ).toEqual(["attention-new", "attention-old", "manual-a", "manual-b"]);
   });
 });
 
@@ -949,7 +1035,7 @@ describe("resolveProjectStatusIndicator", () => {
     expect(
       resolveProjectStatusIndicator([
         {
-          label: "Completed",
+          label: "Ready for review",
           colorClass: "text-emerald-600",
           dotClass: "bg-emerald-500",
           pulse: false,
@@ -974,7 +1060,7 @@ describe("resolveProjectStatusIndicator", () => {
     expect(
       resolveProjectStatusIndicator([
         {
-          label: "Completed",
+          label: "Ready for review",
           colorClass: "text-emerald-600",
           dotClass: "bg-emerald-500",
           pulse: false,

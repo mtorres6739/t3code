@@ -7,7 +7,7 @@ import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";
-import { sortThreads } from "../lib/threadSort";
+import { normalizeSidebarThreadSortOrder, sortThreads } from "../lib/threadSort";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 
@@ -119,7 +119,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
 }): CommandPaletteActionItem[] {
   const sortedThreads = sortThreads(
     input.threads.filter((thread) => thread.archivedAt === null),
-    input.sortOrder,
+    normalizeSidebarThreadSortOrder(input.sortOrder),
   );
   const visibleThreads =
     input.limit === undefined ? sortedThreads : sortedThreads.slice(0, input.limit);

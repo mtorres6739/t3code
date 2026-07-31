@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import type {
   EnvironmentProject,
@@ -9,6 +10,7 @@ import { memo, useCallback, useMemo, type ComponentProps } from "react";
 import { Pressable, useColorScheme, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import Svg, { Circle, Path } from "react-native-svg";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -16,6 +18,7 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
@@ -446,7 +449,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const selectedBackgroundColor = useThemeColor("--color-user-bubble");
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
-  const status = resolveThreadStatus(thread);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const completionAttentionSince = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.completionAttentionSince
+    : undefined;
+  const status = resolveThreadStatus(thread, completionAttentionSince);
   const pr = useThreadPr(thread, props.projectCwd);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,

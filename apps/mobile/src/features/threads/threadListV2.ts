@@ -12,7 +12,13 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
  * (approval), "in motion" (working), and "broken" (failed). Ready is the
  * unlabeled resting state.
  */
-export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
+export type ThreadListV2Status =
+  | "approval"
+  | "input"
+  | "working"
+  | "failed"
+  | "ready-review"
+  | "ready";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more. Shared by the compact Home list and
@@ -41,7 +47,16 @@ export function resolveThreadListV2Enabled(input: {
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "session">,
+  thread: Pick<
+    EnvironmentThreadShell,
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "latestTurn"
+    | "latestUserMessageAt"
+    | "session"
+    | "settledAt"
+  >,
+  completionAttentionSince?: string,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -52,8 +67,26 @@ export function resolveThreadListV2Status(
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
     return "working";
   }
-  if (thread.session?.status === "error") {
+  if (thread.session?.status === "error" || thread.latestTurn?.state === "error") {
     return "failed";
+  }
+  if (thread.latestTurn?.state === "interrupted") {
+    return "ready";
+  }
+
+  const completedAtMs = Date.parse(thread.latestTurn?.completedAt ?? "");
+  const rolloutMs = Date.parse(completionAttentionSince ?? "");
+  const latestUserMessageAtMs = Date.parse(thread.latestUserMessageAt ?? "");
+  const settledAtMs = Date.parse(thread.settledAt ?? "");
+  if (
+    thread.latestTurn?.state === "completed" &&
+    Number.isFinite(completedAtMs) &&
+    Number.isFinite(rolloutMs) &&
+    completedAtMs > rolloutMs &&
+    (!Number.isFinite(latestUserMessageAtMs) || latestUserMessageAtMs < completedAtMs) &&
+    (!Number.isFinite(settledAtMs) || settledAtMs < completedAtMs)
+  ) {
+    return "ready-review";
   }
   return "ready";
 }

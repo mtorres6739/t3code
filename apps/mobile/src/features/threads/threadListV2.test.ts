@@ -88,6 +88,30 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(thread)).toBe("approval");
   });
 
+  it("keeps new completions ready for review until newer user activity", () => {
+    const completed = makeThread({
+      id: ThreadId.make("completed"),
+      title: "Completed",
+      latestUserMessageAt: "2026-06-01T10:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("turn-completed"),
+        state: "completed",
+        requestedAt: "2026-06-01T10:00:00.000Z",
+        startedAt: "2026-06-01T10:00:01.000Z",
+        completedAt: "2026-06-01T10:05:00.000Z",
+        assistantMessageId: MessageId.make("message-completed"),
+      },
+    });
+
+    expect(resolveThreadListV2Status(completed, "2026-06-01T09:00:00.000Z")).toBe("ready-review");
+    expect(
+      resolveThreadListV2Status(
+        { ...completed, latestUserMessageAt: "2026-06-01T10:06:00.000Z" },
+        "2026-06-01T09:00:00.000Z",
+      ),
+    ).toBe("ready");
+  });
+
   it("resolves ready for quiescent threads", () => {
     expect(resolveThreadListV2Status(makeThread({ id: ThreadId.make("t"), title: "t" }))).toBe(
       "ready",

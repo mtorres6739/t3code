@@ -110,9 +110,11 @@ import {
   hasUnseenCompletion,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  promoteAttentionItems,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarV2Status,
+  resolveThreadAttention,
   resolveWorkingStartedAt,
   shouldNavigateAfterProjectRemoval,
   sortLogicalProjectsForSidebar,
@@ -422,12 +424,15 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   );
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const completionAttentionSince = useUiStateStore((state) => state.completionAttentionSince);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
 
   // Same semantics as v1 (never-visited counts as read): flipping the beta
   // flag must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
+  const attention = resolveThreadAttention(thread, completionAttentionSince);
+  const isReadyForReview = attention?.status.label === "Ready for review";
   const status = resolveSidebarV2Status(thread);
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
@@ -447,7 +452,11 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // stands out.
   const isInFlight = status === "working" || status === "approval" || status === "input";
   const shouldRecede =
-    (status === "ready" || isInFlight) && !isUnread && !isWoke && !props.isActive && !isSelected;
+    (status === "ready" || isInFlight) &&
+    !isReadyForReview &&
+    !isWoke &&
+    !props.isActive &&
+    !isSelected;
   // Status hues follow the system-wide convention set by sidebar v1 and the
   // mobile Live Activity/widgets (amber approval, indigo input, sky working)
   // so a thread reads the same color everywhere it surfaces.
@@ -483,9 +492,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   icon: "woke" as const,
                   className: "text-amber-700 dark:text-amber-300",
                 }
-              : isUnread
+              : isReadyForReview
                 ? {
-                    label: "Done",
+                    label: "Ready for review",
                     icon: "done" as const,
                     className: "text-emerald-700 dark:text-emerald-300",
                   }
@@ -1008,6 +1017,7 @@ function latestTurnDiff(
 export default function SidebarV2() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const completionAttentionSince = useUiStateStore((store) => store.completionAttentionSince);
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1418,7 +1428,9 @@ export default function SidebarV2() {
       }
     }
     return {
-      activeThreads: sortThreadsForSidebarV2(active),
+      activeThreads: promoteAttentionItems(sortThreadsForSidebarV2(active), (thread) =>
+        resolveThreadAttention(thread, completionAttentionSince),
+      ),
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: snoozed.toSorted(
         (left, right) =>
@@ -1431,6 +1443,7 @@ export default function SidebarV2() {
   }, [
     autoSettleAfterDays,
     changeRequestStateByKey,
+    completionAttentionSince,
     nowMinute,
     scopedProjectKeys,
     serverConfigs,

@@ -1,6 +1,7 @@
 export {
   getLatestThreadForProject,
   getThreadSortTimestamp,
+  normalizeSidebarThreadSortOrder,
   sortThreads,
   toSortableTimestamp,
   type ThreadSortInput,

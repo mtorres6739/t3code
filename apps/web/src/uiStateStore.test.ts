@@ -10,6 +10,7 @@ import {
   type PersistedUiState,
   persistState,
   reorderProjects,
+  reorderThreads,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
@@ -21,6 +22,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    threadOrder: [],
+    completionAttentionSince: "2026-03-09T00:00:00.000Z",
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -116,6 +119,25 @@ describe("uiStateStore pure functions", () => {
     );
   });
 
+  it("reorders scoped thread keys without disturbing other projects", () => {
+    const currentOrder = ["env:thread-a", "env:thread-b", "env:thread-c"];
+    const next = reorderThreads(
+      makeUiState({ threadOrder: ["env:other-2", "env:other-1", ...currentOrder] }),
+      currentOrder,
+      "env:thread-a",
+      "env:thread-c",
+    );
+
+    expect(next.threadOrder).toEqual([
+      "env:other-2",
+      "env:other-1",
+      "env:thread-b",
+      "env:thread-c",
+      "env:thread-a",
+    ]);
+    expect(reorderThreads(next, currentOrder, "missing", "env:thread-c")).toBe(next);
+  });
+
   it("stores explicit changed-file expansion choices", () => {
     const threadId = ThreadId.make("thread-1");
     const collapsed = setThreadChangedFilesExpanded(makeUiState(), threadId, "turn-1", false);
@@ -154,6 +176,8 @@ describe("parsePersistedState", () => {
         invalid: "no" as unknown as boolean,
       },
       projectOrder: ["physical-b", "", "physical-a", "physical-b"],
+      threadOrder: ["environment:thread-2", "", "environment:thread-1"],
+      completionAttentionSince: "2026-03-08T00:00:00.000Z",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
@@ -173,6 +197,8 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      threadOrder: ["environment:thread-2", "environment:thread-1"],
+      completionAttentionSince: "2026-03-08T00:00:00.000Z",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -184,6 +210,13 @@ describe("parsePersistedState", () => {
         },
       },
     });
+  });
+
+  it("seeds a deterministic completion-attention epoch for legacy state", () => {
+    const parsed = parsePersistedState({}, "2026-03-10T12:00:00.000Z");
+
+    expect(parsed.completionAttentionSince).toBe("2026-03-10T12:00:00.000Z");
+    expect(parsed.threadOrder).toEqual([]);
   });
 
   it("ignores changed-file expansion values saved with legacy folder semantics", () => {
@@ -270,6 +303,8 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      threadOrder: ["environment:thread-2", "environment:thread-1"],
+      completionAttentionSince: "2026-03-09T00:00:00.000Z",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -292,6 +327,8 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      threadOrder: ["environment:thread-2", "environment:thread-1"],
+      completionAttentionSince: "2026-03-09T00:00:00.000Z",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },

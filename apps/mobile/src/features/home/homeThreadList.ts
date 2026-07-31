@@ -9,6 +9,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import {
   getThreadSortTimestamp,
+  normalizeSidebarThreadSortOrder,
   sortThreads,
   toSortableTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
@@ -243,7 +244,8 @@ function selectRecentThreads(
 ): ReadonlyArray<EnvironmentThreadShell> {
   const cutoff = now - RECENT_THREAD_WINDOW_MS;
   const recent = sortedThreads.filter(
-    (thread) => getThreadSortTimestamp(thread, threadSortOrder) >= cutoff,
+    (thread) =>
+      getThreadSortTimestamp(thread, normalizeSidebarThreadSortOrder(threadSortOrder)) >= cutoff,
   );
   return recent.length > 0 ? recent : sortedThreads.slice(0, RECENT_THREAD_FALLBACK_COUNT);
 }
@@ -361,7 +363,10 @@ export function buildHomeThreadGroups(input: {
       continue;
     }
 
-    const sortedThreads = sortThreads(matchingThreads, input.threadSortOrder);
+    const sortedThreads = sortThreads(
+      matchingThreads,
+      normalizeSidebarThreadSortOrder(input.threadSortOrder),
+    );
     // An active search should reach the full history, so the recency window
     // only trims the default (no-query) view.
     const recentThreads =

@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -6,6 +7,7 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, type ComponentProps } from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -14,6 +16,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
@@ -42,6 +45,10 @@ const STATUS_LABEL_BY_STATUS: Partial<
   input: { label: "Input", className: "text-indigo-600 dark:text-indigo-300" },
   working: { label: "Working", className: "text-sky-600 dark:text-sky-400" },
   failed: { label: "Failed", className: "text-red-700 dark:text-red-300" },
+  "ready-review": {
+    label: "Ready for review",
+    className: "text-emerald-700 dark:text-emerald-300",
+  },
 };
 
 function threadTimeLabel(thread: EnvironmentThreadShell): string {
@@ -273,7 +280,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
 
-  const status = resolveThreadListV2Status(thread);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const completionAttentionSince = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.completionAttentionSince
+    : undefined;
+  const status = resolveThreadListV2Status(thread, completionAttentionSince);
   const statusLabel = STATUS_LABEL_BY_STATUS[status];
   const timeLabel = threadTimeLabel(thread);
 

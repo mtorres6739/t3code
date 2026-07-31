@@ -59,7 +59,7 @@ function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
 
 export function getThreadSortTimestamp(
   thread: ThreadSortInput,
-  sortOrder: SidebarThreadSortOrder | Exclude<SidebarProjectSortOrder, "manual">,
+  sortOrder: Exclude<SidebarThreadSortOrder, "manual"> | Exclude<SidebarProjectSortOrder, "manual">,
 ): number {
   if (sortOrder === "created_at") {
     return (
@@ -69,9 +69,15 @@ export function getThreadSortTimestamp(
   return getLatestUserMessageTimestamp(thread);
 }
 
+export function normalizeSidebarThreadSortOrder(
+  sortOrder: SidebarThreadSortOrder,
+): Exclude<SidebarThreadSortOrder, "manual"> {
+  return sortOrder === "manual" ? "updated_at" : sortOrder;
+}
+
 export function sortThreads<T extends { readonly id: string } & ThreadSortInput>(
   threads: readonly T[],
-  sortOrder: SidebarThreadSortOrder,
+  sortOrder: Exclude<SidebarThreadSortOrder, "manual">,
 ): T[] {
   return Arr.sort(
     threads,
@@ -94,7 +100,11 @@ export function getLatestThreadForProject<
     readonly projectId: ProjectId;
     readonly archivedAt: string | null;
   } & ThreadSortInput,
->(threads: readonly T[], projectId: ProjectId, sortOrder: SidebarThreadSortOrder): T | null {
+>(
+  threads: readonly T[],
+  projectId: ProjectId,
+  sortOrder: Exclude<SidebarThreadSortOrder, "manual">,
+): T | null {
   return (
     sortThreads(
       threads.filter((thread) => thread.projectId === projectId && thread.archivedAt === null),

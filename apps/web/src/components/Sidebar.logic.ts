@@ -3,6 +3,7 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
+  normalizeSidebarThreadSortOrder,
   sortThreads,
   toSortableTimestamp,
   type ThreadSortInput,
@@ -98,7 +99,8 @@ export interface ThreadStatusPill {
   label:
     | "Working"
     | "Connecting"
-    | "Completed"
+    | "Ready for review"
+    | "Failed"
     | "Pending Approval"
     | "Awaiting Input"
     | "Plan Ready";
@@ -108,12 +110,13 @@ export interface ThreadStatusPill {
 }
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
-  "Pending Approval": 5,
-  "Awaiting Input": 4,
-  Working: 3,
-  Connecting: 3,
-  "Plan Ready": 2,
-  Completed: 1,
+  "Pending Approval": 7,
+  "Awaiting Input": 6,
+  Failed: 5,
+  "Plan Ready": 4,
+  "Ready for review": 3,
+  Working: 2,
+  Connecting: 2,
 };
 
 type ThreadStatusInput = Pick<
@@ -125,8 +128,140 @@ type ThreadStatusInput = Pick<
   | "latestTurn"
   | "session"
 > & {
+  latestUserMessageAt?: string | null | undefined;
+  settledAt?: string | null | undefined;
+  updatedAt?: string | undefined;
   lastVisitedAt?: string | undefined;
 };
+
+export interface ThreadAttention {
+  status: ThreadStatusPill;
+  timestamp: number;
+}
+
+function latestValidTimestamp(...values: ReadonlyArray<string | null | undefined>): number {
+  let latest = 0;
+  for (const value of values) {
+    if (value == null) continue;
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) latest = Math.max(latest, parsed);
+  }
+  return latest;
+}
+
+function attentionStatus(
+  label: ThreadStatusPill["label"],
+  colorClass: string,
+  dotClass: string,
+): ThreadStatusPill {
+  return { label, colorClass, dotClass, pulse: false };
+}
+
+export function resolveThreadAttention(
+  thread: ThreadStatusInput,
+  completionAttentionSince: string,
+): ThreadAttention | null {
+  const activityTimestamp = latestValidTimestamp(
+    thread.session?.updatedAt,
+    thread.latestTurn?.completedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.requestedAt,
+    thread.updatedAt,
+  );
+  if (thread.hasPendingApprovals) {
+    return {
+      status: attentionStatus(
+        "Pending Approval",
+        "text-amber-600 dark:text-amber-300/90",
+        "bg-amber-500 dark:bg-amber-300/90",
+      ),
+      timestamp: activityTimestamp,
+    };
+  }
+  if (thread.hasPendingUserInput) {
+    return {
+      status: attentionStatus(
+        "Awaiting Input",
+        "text-indigo-600 dark:text-indigo-300/90",
+        "bg-indigo-500 dark:bg-indigo-300/90",
+      ),
+      timestamp: activityTimestamp,
+    };
+  }
+  if (thread.session?.status === "error" || thread.latestTurn?.state === "error") {
+    return {
+      status: attentionStatus(
+        "Failed",
+        "text-red-600 dark:text-red-300/90",
+        "bg-red-500 dark:bg-red-300/90",
+      ),
+      timestamp: activityTimestamp,
+    };
+  }
+
+  if (thread.latestTurn?.state === "interrupted") return null;
+
+  const hasPlanReadyPrompt =
+    thread.latestTurn?.state === "completed" &&
+    thread.interactionMode === "plan" &&
+    isLatestTurnSettled(thread.latestTurn, thread.session) &&
+    thread.hasActionableProposedPlan;
+  if (hasPlanReadyPrompt) {
+    return {
+      status: attentionStatus(
+        "Plan Ready",
+        "text-violet-600 dark:text-violet-300/90",
+        "bg-violet-500 dark:bg-violet-300/90",
+      ),
+      timestamp: activityTimestamp,
+    };
+  }
+
+  const completedAt = thread.latestTurn?.completedAt;
+  if (thread.latestTurn?.state !== "completed" || completedAt == null) return null;
+  const completedAtMs = Date.parse(completedAt);
+  const rolloutMs = Date.parse(completionAttentionSince);
+  if (
+    !Number.isFinite(completedAtMs) ||
+    !Number.isFinite(rolloutMs) ||
+    completedAtMs <= rolloutMs
+  ) {
+    return null;
+  }
+  const latestUserMessageAtMs = Date.parse(thread.latestUserMessageAt ?? "");
+  if (Number.isFinite(latestUserMessageAtMs) && latestUserMessageAtMs >= completedAtMs) return null;
+  const settledAtMs = Date.parse(thread.settledAt ?? "");
+  if (Number.isFinite(settledAtMs) && settledAtMs >= completedAtMs) return null;
+
+  return {
+    status: attentionStatus(
+      "Ready for review",
+      "text-emerald-600 dark:text-emerald-300/90",
+      "bg-emerald-500 dark:bg-emerald-300/90",
+    ),
+    timestamp: completedAtMs,
+  };
+}
+
+export function promoteAttentionItems<T>(
+  baseline: readonly T[],
+  resolveAttention: (item: T) => ThreadAttention | null,
+): T[] {
+  const attention: Array<{ item: T; timestamp: number; baselineIndex: number }> = [];
+  const rest: T[] = [];
+  for (const [baselineIndex, item] of baseline.entries()) {
+    const resolved = resolveAttention(item);
+    if (resolved === null) {
+      rest.push(item);
+    } else {
+      attention.push({ item, timestamp: resolved.timestamp, baselineIndex });
+    }
+  }
+  attention.sort(
+    (left, right) => right.timestamp - left.timestamp || left.baselineIndex - right.baselineIndex,
+  );
+  return [...attention.map((entry) => entry.item), ...rest];
+}
 
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
@@ -540,26 +675,16 @@ export function formatWorkingDurationLabel(elapsedMs: number): string {
 
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
+  completionAttentionSince?: string;
 }): ThreadStatusPill | null {
   const { thread } = input;
+  const attention = resolveThreadAttention(
+    thread,
+    input.completionAttentionSince ?? "9999-12-31T23:59:59.999Z",
+  );
 
-  if (thread.hasPendingApprovals) {
-    return {
-      label: "Pending Approval",
-      colorClass: "text-amber-600 dark:text-amber-300/90",
-      dotClass: "bg-amber-500 dark:bg-amber-300/90",
-      pulse: false,
-    };
-  }
-
-  if (thread.hasPendingUserInput) {
-    return {
-      label: "Awaiting Input",
-      colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
-      pulse: false,
-    };
-  }
+  if (attention?.status.label === "Pending Approval") return attention.status;
+  if (attention?.status.label === "Awaiting Input") return attention.status;
 
   if (thread.session?.status === "running") {
     return {
@@ -579,27 +704,14 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  const hasPlanReadyPrompt =
-    !thread.hasPendingUserInput &&
-    thread.interactionMode === "plan" &&
-    isLatestTurnSettled(thread.latestTurn, thread.session) &&
-    thread.hasActionableProposedPlan;
-  if (hasPlanReadyPrompt) {
-    return {
-      label: "Plan Ready",
-      colorClass: "text-violet-600 dark:text-violet-300/90",
-      dotClass: "bg-violet-500 dark:bg-violet-300/90",
-      pulse: false,
-    };
-  }
+  if (attention !== null) return attention.status;
 
-  if (hasUnseenCompletion(thread)) {
-    return {
-      label: "Completed",
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
-      pulse: false,
-    };
+  if (input.completionAttentionSince === undefined && hasUnseenCompletion(thread)) {
+    return attentionStatus(
+      "Ready for review",
+      "text-emerald-600 dark:text-emerald-300/90",
+      "bg-emerald-500 dark:bg-emerald-300/90",
+    );
   }
 
   return null;
@@ -693,7 +805,7 @@ export function getFallbackThreadIdAfterDelete<
           thread.id !== deletedThreadId &&
           !deletedThreadIds?.has(thread.id),
       ),
-      sortOrder,
+      normalizeSidebarThreadSortOrder(sortOrder),
     )[0]?.id ?? null
   );
 }

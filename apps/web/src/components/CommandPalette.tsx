@@ -78,7 +78,11 @@ import {
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
+import {
+  getLatestThreadForProject,
+  normalizeSidebarThreadSortOrder,
+  sortThreads,
+} from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
@@ -806,12 +810,12 @@ function OpenCommandPaletteDialog(props: {
                 thread.archivedAt === null &&
                 groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
             ),
-            clientSettings.sidebarThreadSortOrder,
+            normalizeSidebarThreadSortOrder(clientSettings.sidebarThreadSortOrder),
           )[0] ?? null)
         : getLatestThreadForProject(
             threads.filter((thread) => thread.environmentId === project.environmentId),
             project.id,
-            clientSettings.sidebarThreadSortOrder,
+            normalizeSidebarThreadSortOrder(clientSettings.sidebarThreadSortOrder),
           );
       if (latestThread) {
         await navigate({
@@ -1390,7 +1394,7 @@ function OpenCommandPaletteDialog(props: {
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
-          clientSettings.sidebarThreadSortOrder,
+          normalizeSidebarThreadSortOrder(clientSettings.sidebarThreadSortOrder),
         );
         if (latestThread) {
           await navigate({
